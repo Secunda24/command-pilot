@@ -1,0 +1,5 @@
+﻿CommandPilot GitHub-ready backup copy
+Created: 2026-04-03 09:17:13 +02:00
+
+Included: apps, packages, services, docs, tools, root config files
+Excluded: node_modules, local logs (*.log), .env

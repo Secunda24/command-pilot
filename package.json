@@ -1,0 +1,22 @@
+{
+  "name": "commandpilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/desktop",
+    "packages/core",
+    "services/local-orchestrator"
+  ],
+  "engines": {
+    "node": "20.20.2"
+  },
+  "scripts": {
+    "dev:desktop": "npm run dev --workspace @commandpilot/desktop",
+    "dev:bridge": "npm run dev --workspace @commandpilot/local-orchestrator",
+    "build:desktop": "npm run build --workspace @commandpilot/desktop",
+    "typecheck:core": "npm run typecheck --workspace @commandpilot/core",
+    "typecheck:service": "npm run typecheck --workspace @commandpilot/local-orchestrator",
+    "seed:demo": "npm run seed:demo --workspace @commandpilot/local-orchestrator"
+  }
+}
