@@ -1,0 +1,75 @@
+import { linkedApps, trustedWebsiteRules } from "@commandpilot/core";
+
+export type PageId =
+  | "dashboard"
+  | "command-center"
+  | "running-tasks"
+  | "activity-log"
+  | "approvals"
+  | "skills"
+  | "settings"
+  | "pairing";
+
+export const navigationItems: Array<{
+  id: PageId;
+  label: string;
+  description: string;
+}> = [
+  { id: "dashboard", label: "Dashboard", description: "Overview and quick commands" },
+  { id: "command-center", label: "Command Center", description: "Chat and execution steps" },
+  { id: "running-tasks", label: "Running Tasks", description: "Long-running work and watchers" },
+  { id: "activity-log", label: "Activity Log", description: "Timeline of everything Echo touched" },
+  { id: "approvals", label: "Approvals", description: "Sensitive actions waiting on you" },
+  { id: "skills", label: "Skills & Workflows", description: "Configured actions and bundles" },
+  { id: "settings", label: "Settings", description: "Voice, trust boundaries, and preferences" },
+  { id: "pairing", label: "Device Pairing", description: "Trusted phone connection" }
+];
+
+export const approvedApps = [
+  ...linkedApps.map((app) => app.name),
+  "Google Chrome",
+  "Adobe Premiere Pro",
+  "Power Automate Desktop"
+];
+
+export const approvedFolders = [
+  "C:\\Users\\angel\\Documents\\Clients",
+  "C:\\Users\\angel\\Documents\\Finance",
+  "C:\\Users\\angel\\Documents\\Daily"
+];
+
+export const trustedWebsites = trustedWebsiteRules.map((rule) => `${rule.label} - ${rule.defaultUrl}`);
+
+export const settingsSections = [
+  {
+    title: "Assistant",
+    description: "Core Echo identity and response behavior.",
+    items: ["Assistant name: Echo", "Tone: Calm futuristic", "Dark theme default enabled"]
+  },
+  {
+    title: "Voice",
+    description: "v1 local/system speech controls with future upgrade placeholders.",
+    items: ["Local TTS enabled", "Speech rate adjustable", "Premium provider placeholder"]
+  },
+  {
+    title: "Trust Boundaries",
+    description: "Approved routes Echo can use without leaving the safe lane.",
+    items: ["Approved folders", "Approved desktop apps", "Trusted websites", "Chrome safe mode allowlist"]
+  }
+];
+
+export const pairingChecklist = [
+  "Open the Android companion and tap Pair Device.",
+  "Enter the six-character pairing code or scan the QR placeholder.",
+  "Approve the trusted-device request on both devices.",
+  "Echo will begin syncing approvals and notifications."
+];
+
+export function formatTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
