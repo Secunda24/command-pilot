@@ -23,7 +23,7 @@ import { RunningTasksView } from "./RunningTasksView";
 import { SettingsView } from "./SettingsView";
 import { SkillsView } from "./SkillsView";
 import { applyApprovalDecision, pushExecution, updateExecutionFromApproval } from "./state";
-import { interpretCommandWithAi } from "../lib/aiBridge";
+import { fetchAiRuntimeStatus, interpretCommandWithAi, type AiRuntimeStatus } from "../lib/aiBridge";
 import {
   executeRuntimeActions,
   fetchRuntimeSafetySettings,
@@ -61,6 +61,24 @@ const defaultRuntimeSettings: RuntimeSafetySettings = {
     "127.0.0.1"
   ],
   approvedLinkedAppKeys: linkedApps.map((app) => app.key)
+};
+
+const defaultAiRuntimeStatus: AiRuntimeStatus = {
+  preferredProvider: "ollama",
+  zeroTokenMode: true,
+  localOnly: true,
+  message: "CommandPilot is configured for local Ollama mode.",
+  ollama: {
+    baseUrl: "http://127.0.0.1:11434",
+    model: "qwen2.5-coder:7b",
+    reachable: false,
+    modelAvailable: false,
+    message: "Waiting for the local Ollama runtime."
+  },
+  openai: {
+    configured: false,
+    model: null
+  }
 };
 
 function shouldInterpretWithAi(commandText: string): boolean {
@@ -113,11 +131,15 @@ export function App() {
   const [runtimeSettingsStatus, setRuntimeSettingsStatus] = useState(
     "Loading runtime safety settings..."
   );
+  const [aiRuntimeStatus, setAiRuntimeStatus] = useState<AiRuntimeStatus>(defaultAiRuntimeStatus);
+  const [aiRuntimeStatusMessage, setAiRuntimeStatusMessage] = useState(
+    "Checking the local AI runtime..."
+  );
   const [conversation, setConversation] = useState<ChatMessage[]>([
     {
       id: "assistant-start",
       role: "assistant",
-      text: "CommandPilot is online. Tell me what you want handled, and I'll route it cleanly.",
+      text: "CommandPilot is online in local-first mode. Tell me what you want handled, and I'll route it cleanly.",
       timestamp: new Date().toISOString()
     }
   ]);
@@ -174,6 +196,18 @@ export function App() {
         setRuntimeSettingsStatus("Runtime settings synced with local bridge.");
       } catch {
         setRuntimeSettingsStatus("Bridge settings unavailable. Running with local settings.");
+      }
+    })();
+
+    void (async () => {
+      try {
+        const runtimeStatus = await fetchAiRuntimeStatus();
+        setAiRuntimeStatus(runtimeStatus);
+        setAiRuntimeStatusMessage(runtimeStatus.message);
+      } catch {
+        setAiRuntimeStatusMessage(
+          "The AI runtime status is unavailable. Start the local bridge and Ollama to confirm zero-token mode."
+        );
       }
     })();
   }, []);
@@ -573,6 +607,8 @@ export function App() {
             demoAutoApprove={demoAutoApprove}
             voiceTestStatus={voiceTestStatus}
             runtimeSettingsStatus={runtimeSettingsStatus}
+            aiRuntimeStatus={aiRuntimeStatus}
+            aiRuntimeStatusMessage={aiRuntimeStatusMessage}
             approvedFolders={runtimeSettings.approvedRoots}
             trustedWebsiteHosts={runtimeSettings.trustedWebsiteHosts}
             approvedAppKeys={runtimeSettings.approvedLinkedAppKeys}

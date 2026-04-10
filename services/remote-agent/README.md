@@ -27,7 +27,7 @@ pip install pyttsx3
 set RELAY_URL=wss://your-relay-host.onrender.com
 set AUTH_TOKEN=your-shared-token
 set COMMANDPILOT_BRIDGE_URL=http://127.0.0.1:8787
-set OLLAMA_MODEL=gemma:2b
+set OLLAMA_MODEL=qwen2.5-coder:7b
 ```
 
 3. Start the agent:

@@ -16,7 +16,7 @@ from jarvis_skills import detect_and_run, process_action_queue
 # ── shared state ──────────────────────────────────────────────────────────────
 CLIENTS: set = set()
 _loop: asyncio.AbstractEventLoop | None = None
-OLLAMA_MODEL = "gemma:2b"
+OLLAMA_MODEL = "qwen2.5-coder:7b"
 
 # ── outbound broadcast (thread-safe) ─────────────────────────────────────────
 def broadcast(data: dict):

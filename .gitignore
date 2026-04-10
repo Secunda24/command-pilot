@@ -1,0 +1,7 @@
+.env
+.env.local
+.commandpilot-*.log
+node_modules/
+apps/desktop/node_modules/
+services/remote-agent/__pycache__/
+*.pyc

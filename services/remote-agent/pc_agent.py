@@ -25,6 +25,36 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+
+def load_dotenv():
+    repo_root = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+    candidate_files = [
+        os.path.join(repo_root, ".env.local"),
+        os.path.join(repo_root, ".env"),
+    ]
+
+    for env_path in candidate_files:
+        if not os.path.exists(env_path):
+            continue
+
+        try:
+            with open(env_path, "r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip("\"'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+        except Exception as exc:
+            print(f"[AGENT] Could not load env file {env_path}: {exc}")
+
+
+load_dotenv()
+
 # Prevent Windows console encoding issues from crashing fallback logs/skills.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -35,7 +65,7 @@ except Exception:
 # Configuration
 RELAY_URL = os.getenv("RELAY_URL", "wss://your-relay-url.onrender.com")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "change-me-in-env")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma:2b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
 COMMANDPILOT_BRIDGE_URL = os.getenv("COMMANDPILOT_BRIDGE_URL", "http://127.0.0.1:8787")
 COMMANDPILOT_BRIDGE_TIMEOUT = int(os.getenv("COMMANDPILOT_BRIDGE_TIMEOUT", "45"))
 RECONNECT_DELAY = 5

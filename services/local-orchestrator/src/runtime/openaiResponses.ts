@@ -9,11 +9,30 @@ import { loadCommandPilotEnv } from "./env";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
-const DEFAULT_OLLAMA_MODEL = "gemma:2b";
+const DEFAULT_OLLAMA_MODEL = "qwen2.5-coder:7b";
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const REQUEST_TIMEOUT_MS = 45000;
+const OLLAMA_STATUS_TIMEOUT_MS = 2500;
 
-type AiProviderPreference = "auto" | "openai" | "ollama";
+type AiProviderPreference = "openai" | "ollama";
+
+export interface AiRuntimeStatus {
+  preferredProvider: AiProviderPreference;
+  zeroTokenMode: boolean;
+  localOnly: boolean;
+  message: string;
+  ollama: {
+    baseUrl: string;
+    model: string;
+    reachable: boolean;
+    modelAvailable: boolean;
+    message: string;
+  };
+  openai: {
+    configured: boolean;
+    model: string | null;
+  };
+}
 
 const interpretationSchema = {
   type: "object",
@@ -70,11 +89,7 @@ function getAiProviderPreference(): AiProviderPreference {
   loadCommandPilotEnv();
 
   const configured = process.env.COMMANDPILOT_AI_PROVIDER?.trim().toLowerCase();
-  if (configured === "openai" || configured === "ollama") {
-    return configured;
-  }
-
-  return "auto";
+  return configured === "openai" ? "openai" : "ollama";
 }
 
 function truncateText(value: string, limit: number): string {
@@ -298,20 +313,89 @@ export function isOllamaConfigured(): boolean {
 
 export function isAiConfigured(): boolean {
   const provider = getAiProviderPreference();
-
-  if (provider === "openai") {
-    return isOpenAiConfigured();
-  }
-
-  if (provider === "ollama") {
-    return isOllamaConfigured();
-  }
-
-  return isOllamaConfigured() || isOpenAiConfigured();
+  return provider === "openai" ? isOpenAiConfigured() : isOllamaConfigured();
 }
 
 export function isEchoAiBridgeError(error: unknown): error is EchoAiBridgeError {
   return error instanceof EchoAiBridgeError;
+}
+
+async function inspectOllamaRuntime(config: {
+  baseUrl: string;
+  model: string;
+}): Promise<AiRuntimeStatus["ollama"]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_STATUS_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${config.baseUrl}/api/tags`, {
+      method: "GET",
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      return {
+        baseUrl: config.baseUrl,
+        model: config.model,
+        reachable: false,
+        modelAvailable: false,
+        message: "Ollama did not answer cleanly. Make sure the Ollama app or `ollama serve` is running."
+      };
+    }
+
+    const payload = (await response.json()) as { models?: Array<{ name?: unknown }> };
+    const modelAvailable =
+      payload.models?.some((model) => typeof model.name === "string" && model.name === config.model) === true;
+
+    return {
+      baseUrl: config.baseUrl,
+      model: config.model,
+      reachable: true,
+      modelAvailable,
+      message: modelAvailable
+        ? `Ollama is online with ${config.model} ready.`
+        : `Ollama is online, but ${config.model} is not installed yet. Run \`ollama pull ${config.model}\`.`
+    };
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+
+    return {
+      baseUrl: config.baseUrl,
+      model: config.model,
+      reachable: false,
+      modelAvailable: false,
+      message: timedOut
+        ? "Ollama took too long to answer. Check that the local service is running."
+        : "Ollama is not reachable yet. Start the Ollama desktop app or run `ollama serve`."
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function getAiRuntimeStatus(): Promise<AiRuntimeStatus> {
+  const preferredProvider = getAiProviderPreference();
+  const openAiConfig = getOpenAiConfig();
+  const ollamaConfig = getOllamaConfig();
+  const ollama = await inspectOllamaRuntime(ollamaConfig);
+  const zeroTokenMode = preferredProvider === "ollama";
+
+  return {
+    preferredProvider,
+    zeroTokenMode,
+    localOnly: zeroTokenMode,
+    message:
+      preferredProvider === "ollama"
+        ? ollama.modelAvailable
+          ? "CommandPilot is locked to local Ollama mode, so the app can run without token costs."
+          : ollama.message
+        : "CommandPilot is configured for OpenAI, which can incur token costs until you switch back to Ollama.",
+    ollama,
+    openai: {
+      configured: openAiConfig !== null,
+      model: openAiConfig?.model ?? null
+    }
+  };
 }
 
 async function interpretCommandWithOpenAiInternal(
@@ -465,25 +549,7 @@ export async function interpretCommandWithAi(
 ): Promise<Omit<EchoAiInterpretResponse, "ok">> {
   const provider = getAiProviderPreference();
 
-  if (provider === "openai") {
-    return interpretCommandWithOpenAiInternal(payload);
-  }
-
-  if (provider === "ollama") {
-    return interpretCommandWithOllamaInternal(payload);
-  }
-
-  try {
-    return await interpretCommandWithOllamaInternal(payload);
-  } catch (ollamaError) {
-    if (isOpenAiConfigured()) {
-      return interpretCommandWithOpenAiInternal(payload);
-    }
-
-    if (isEchoAiBridgeError(ollamaError)) {
-      throw ollamaError;
-    }
-
-    throw new EchoAiBridgeError("No AI provider is currently available on this machine.", 503);
-  }
+  return provider === "openai"
+    ? interpretCommandWithOpenAiInternal(payload)
+    : interpretCommandWithOllamaInternal(payload);
 }

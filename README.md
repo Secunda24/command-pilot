@@ -1,6 +1,7 @@
 # CommandPilot
 
 CommandPilot is a private, personal device-assistant system with a calm assistant persona named **Echo**.
+It is now wired for **local-first AI by default**, using **Ollama on your own Windows machine** so the core experience can run without token spend.
 
 This v1 scaffold includes:
 
@@ -20,6 +21,15 @@ CommandPilot is designed for one trusted owner, not multi-tenant SaaS.
 - **Mobile web remote app**: browser-based control from any device
 - **Shared orchestrator**: command parsing, planning, routing, safety, and activity logging
 - **Remote relay + PC agent**: internet bridge for phone/browser command routing
+
+## Cost Model
+
+CommandPilot is configured to avoid token expenses by default.
+
+- **Desktop + local bridge + PC agent** run on your own machine.
+- **Ollama** handles local AI inference on your PC.
+- **Render** only hosts the relay and mobile web UI so your phone can reach your PC.
+- **OpenAI is optional** and only used if you explicitly change `COMMANDPILOT_AI_PROVIDER=openai`.
 
 ## Repo Layout
 
@@ -91,28 +101,54 @@ Extra desktop control commands now available:
 npm install
 ```
 
-### Run the desktop app
+### Configure local Ollama mode
+
+Copy `.env.example` to `.env` and keep the default local values:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Default local-first config:
+
+```dotenv
+COMMANDPILOT_AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=qwen2.5-coder:7b
+```
+
+Install Ollama, then pull the default model once:
+
+```bash
+ollama pull qwen2.5-coder:7b
+```
+
+### Launch CommandPilot from your desktop
+
+CommandPilot now includes a Windows launcher that:
+
+- starts Ollama if available
+- builds the desktop frontend if needed
+- starts the local bridge
+- opens the built desktop app in its own app-style window
+
+```bash
+npm run launch:desktop
+```
+
+To create a real desktop shortcut:
+
+```bash
+npm run install:desktop-shortcut
+```
+
+After that, you can launch `CommandPilot` directly from your Windows desktop.
+
+### Developer mode
 
 ```bash
 npm run dev:desktop
-```
-
-### Run the local bridge
-
-```bash
 npm run dev:bridge
-```
-
-### Run the remote relay service
-
-```bash
-npm run dev:remote-relay
-```
-
-### Build the desktop frontend
-
-```bash
-npm run build:desktop
 ```
 
 ## Local Orchestrator
@@ -123,32 +159,29 @@ The orchestrator is intentionally modular.
 - `services/local-orchestrator` contains the local service scaffold, adapters, and SQLite schema
 - `services/local-orchestrator/src/db/schema.sql` is the source of truth for local persistence
 
-## OpenAI Responses API
+## AI Runtime
 
-CommandPilot can use OpenAI's Responses API on the local bridge so Echo can interpret natural language and answer non-execution chat without exposing your API key in the browser.
+CommandPilot now defaults to **local Ollama mode**.
 
-1. Copy `.env.example` to `.env`
-2. Set `OPENAI_API_KEY`
-3. Optionally change `OPENAI_MODEL` if you want something other than `gpt-5-mini`
+How it works:
 
-Example:
+- The desktop app sends your raw command plus recent conversation to the local bridge.
+- The local bridge asks your local Ollama runtime to interpret the request.
+- Echo either returns a short conversational reply or normalizes the request into a canonical CommandPilot command.
+- The existing planner, safety rules, approvals, and runtime bridge still execute the action.
+- The Settings page shows whether Ollama is online, which model is selected, and whether the model is already pulled.
 
-```powershell
-Copy-Item .env.example .env
-```
+### Optional paid cloud mode
+
+Only enable this if you intentionally want cloud inference:
 
 ```dotenv
+COMMANDPILOT_AI_PROVIDER=openai
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-5-mini
 ```
 
-How it works:
-
-- The desktop app sends your raw command plus recent conversation to the local bridge
-- The local bridge calls OpenAI's Responses API with `store: false`
-- Echo either returns a short conversational reply or normalizes the request into a canonical CommandPilot command
-- The existing local planner, safety rules, approvals, and runtime bridge still execute the action
-- If no API key is configured, CommandPilot falls back to the local planner automatically
+If you leave `COMMANDPILOT_AI_PROVIDER=ollama`, CommandPilot stays in local-only mode and does not fall back to OpenAI automatically.
 
 To run the demo bootstrap after installing dependencies:
 
@@ -174,12 +207,21 @@ The `apps/mobile-remote` UI can be opened on any phone, tablet, or desktop brows
 
 ### Relay deployment
 
-`services/remote-relay` includes a Render-ready setup:
+The repo root now includes a Render Blueprint file:
 
+- `render.yaml`
 - `services/remote-relay/src/server.js`
-- `services/remote-relay/render.yaml`
 
-Set the relay `AUTH_TOKEN` in your deployment provider.
+Deploy that web service to Render and set the relay `AUTH_TOKEN`.
+This service does **not** run the model. It only relays commands between your phone and your PC.
+
+### Render deployment flow
+
+1. Push this repo to GitHub.
+2. Create a new Render Blueprint or Web Service from the repo.
+3. Use the root `render.yaml`.
+4. Let Render generate `AUTH_TOKEN`.
+5. Copy the final Render URL into your PC agent as `RELAY_URL`.
 
 ### PC agent
 
@@ -194,7 +236,7 @@ Use environment variables to configure:
 - `RELAY_URL` (e.g. `wss://your-relay-url.onrender.com`)
 - `AUTH_TOKEN`
 - `COMMANDPILOT_BRIDGE_URL` (optional, default `http://127.0.0.1:8787`)
-- `OLLAMA_MODEL` (optional, default `gemma:2b`)
+- `OLLAMA_MODEL` (optional, default `qwen2.5-coder:7b`)
 
 The PC agent now calls `POST /api/command/execute` on the local bridge first, so mobile and desktop run through the same planner and runtime actions.
 

@@ -17,6 +17,8 @@
     "dev:bridge": "npm run dev --workspace @commandpilot/local-orchestrator",
     "dev:remote-relay": "npm run dev --workspace @commandpilot/remote-relay",
     "build:desktop": "npm run build --workspace @commandpilot/desktop",
+    "launch:desktop": "powershell -ExecutionPolicy Bypass -File .\\tools\\launch-echo.ps1",
+    "install:desktop-shortcut": "powershell -ExecutionPolicy Bypass -File .\\tools\\create-desktop-shortcut.ps1",
     "typecheck:core": "npm run typecheck --workspace @commandpilot/core",
     "typecheck:service": "npm run typecheck --workspace @commandpilot/local-orchestrator",
     "seed:demo": "npm run seed:demo --workspace @commandpilot/local-orchestrator"

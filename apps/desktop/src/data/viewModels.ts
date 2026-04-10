@@ -44,12 +44,12 @@ export const settingsSections = [
   {
     title: "Assistant",
     description: "Core Echo identity and response behavior.",
-    items: ["Assistant name: Echo", "Tone: Calm futuristic", "Dark theme default enabled"]
+    items: ["Assistant name: Echo", "Tone: Calm futuristic", "Zero-token local mode by default"]
   },
   {
     title: "Voice",
     description: "v1 local/system speech controls with future upgrade placeholders.",
-    items: ["Local TTS enabled", "Speech rate adjustable", "Premium provider placeholder"]
+    items: ["Local TTS enabled", "Speech rate adjustable", "No cloud speech dependency required"]
   },
   {
     title: "Trust Boundaries",
@@ -62,6 +62,7 @@ export const pairingChecklist = [
   "Start the remote relay and copy your AUTH_TOKEN.",
   "Open the mobile remote URL on any phone, tablet, or browser.",
   "Enter your token and wait for the PC agent to connect.",
+  "Render only hosts the relay and mobile UI. The AI still runs locally on your PC through Ollama.",
   "Echo will sync remote commands, approvals, and live status updates."
 ];
 

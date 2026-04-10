@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { FolderOpen, Globe, Laptop2 } from "lucide-react";
+import { Bot, FolderOpen, Globe, Laptop2 } from "lucide-react";
 import { settingsSections } from "../data/viewModels";
+import type { AiRuntimeStatus } from "../lib/aiBridge";
 import { ResourceList, SectionHeading } from "./ui";
 
 interface LinkedAppOption {
@@ -16,6 +17,8 @@ interface SettingsViewProps {
   demoAutoApprove: boolean;
   voiceTestStatus: string;
   runtimeSettingsStatus: string;
+  aiRuntimeStatus: AiRuntimeStatus;
+  aiRuntimeStatusMessage: string;
   approvedFolders: string[];
   trustedWebsiteHosts: string[];
   approvedAppKeys: string[];
@@ -41,6 +44,8 @@ export function SettingsView({
   demoAutoApprove,
   voiceTestStatus,
   runtimeSettingsStatus,
+  aiRuntimeStatus,
+  aiRuntimeStatusMessage,
   approvedFolders,
   trustedWebsiteHosts,
   approvedAppKeys,
@@ -106,6 +111,62 @@ export function SettingsView({
             </div>
             <small className="muted">{voiceTestStatus}</small>
           </div>
+        </section>
+
+        <section className="panel">
+          <SectionHeading
+            title="AI Runtime"
+            copy="Local Ollama is the default so Echo can run without token spend."
+          />
+          <div className="settings-card">
+            <div className="step-row">
+              <span>Active mode</span>
+              <strong>{aiRuntimeStatus.preferredProvider === "ollama" ? "Local Ollama" : "Cloud OpenAI"}</strong>
+            </div>
+            <div className="step-row">
+              <span>Zero token spend</span>
+              <button type="button" className="chip-button" disabled>
+                {aiRuntimeStatus.zeroTokenMode ? "Locked" : "Off"}
+              </button>
+            </div>
+            <div className="step-row">
+              <span>Ollama model</span>
+              <strong>{aiRuntimeStatus.ollama.model}</strong>
+            </div>
+            <div className="step-row">
+              <span>Local runtime</span>
+              <strong>{aiRuntimeStatus.ollama.reachable ? "Online" : "Offline"}</strong>
+            </div>
+            <div className="step-row">
+              <span>Model pulled</span>
+              <strong>{aiRuntimeStatus.ollama.modelAvailable ? "Ready" : "Missing"}</strong>
+            </div>
+            <div className="step-row">
+              <span>Endpoint</span>
+              <strong>{aiRuntimeStatus.ollama.baseUrl}</strong>
+            </div>
+            <small className="muted">{aiRuntimeStatusMessage}</small>
+            <small className="muted">{aiRuntimeStatus.ollama.message}</small>
+            {aiRuntimeStatus.preferredProvider !== "ollama" && (
+              <small className="muted">
+                CommandPilot will use cloud tokens until you set <code>COMMANDPILOT_AI_PROVIDER=ollama</code>.
+              </small>
+            )}
+          </div>
+          <ResourceList
+            icon={<Bot size={16} />}
+            items={[
+              aiRuntimeStatus.zeroTokenMode
+                ? "Local-only AI mode enabled"
+                : "Cloud AI mode is currently enabled",
+              aiRuntimeStatus.ollama.modelAvailable
+                ? `${aiRuntimeStatus.ollama.model} is ready`
+                : `Run ollama pull ${aiRuntimeStatus.ollama.model}`,
+              aiRuntimeStatus.openai.configured
+                ? `OpenAI key detected for optional cloud mode`
+                : "No OpenAI key configured"
+            ]}
+          />
         </section>
 
         <section className="panel">

@@ -23,6 +23,7 @@ import { dirname, extname, normalize, resolve } from "node:path";
 import { loadCommandPilotEnv } from "./runtime/env";
 import { getLinkedAppStatus, launchLinkedApp, openUrl } from "./runtime/linkedApps";
 import {
+  getAiRuntimeStatus,
   interpretCommandWithAi,
   isAiConfigured,
   isEchoAiBridgeError,
@@ -977,11 +978,25 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && request.url === "/health") {
+    const aiStatus = await getAiRuntimeStatus();
     sendJson(response, 200, {
       ok: true,
       service: "commandpilot-local-bridge",
       port: PORT,
-      aiConfigured: isAiConfigured()
+      aiConfigured: isAiConfigured(),
+      preferredAiProvider: aiStatus.preferredProvider,
+      zeroTokenMode: aiStatus.zeroTokenMode,
+      ollamaReachable: aiStatus.ollama.reachable,
+      ollamaModelAvailable: aiStatus.ollama.modelAvailable
+    });
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/api/ai/status") {
+    const aiStatus = await getAiRuntimeStatus();
+    sendJson(response, 200, {
+      ok: true,
+      ...aiStatus
     });
     return;
   }
