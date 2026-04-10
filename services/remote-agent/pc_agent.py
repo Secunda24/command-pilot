@@ -25,6 +25,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
+# Prevent Windows console encoding issues from crashing fallback logs/skills.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 # Configuration
 RELAY_URL = os.getenv("RELAY_URL", "wss://your-relay-url.onrender.com")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN", "change-me-in-env")
@@ -185,6 +192,9 @@ def speak_with_sapi(text: str) -> bool:
     script = (
         "Add-Type -AssemblyName System.Speech;"
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+        "$voices = $s.GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name };"
+        "$preferred = $voices | Where-Object { $_ -match 'Zira|Aria|Jenny|Female' } | Select-Object -First 1;"
+        "if ($preferred) { $s.SelectVoice($preferred) };"
         "$s.Volume = 100;"
         "$s.Rate = 0;"
         f"$s.Speak('{escaped}');"

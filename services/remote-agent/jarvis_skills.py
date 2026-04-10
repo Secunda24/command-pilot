@@ -76,12 +76,12 @@ JOKES = [
 
 # ── OS helpers ────────────────────────────────────────────────────────────────
 def _open_url(url):
-    print(f"[ACTION] opening url → {url}")
+    print(f"[ACTION] opening url -> {url}")
     webbrowser.open(url)
 
 def _start_app(name):
     """Most reliable Windows app launcher — uses shell 'start' resolver."""
-    print(f"[ACTION] starting app → {name}")
+    print(f"[ACTION] starting app -> {name}")
     try:
         # 'start "" <name>' lets Windows find the app via registry / PATH
         subprocess.Popen(f'start "" "{name}"', shell=True)
@@ -100,7 +100,7 @@ def _screenshot():
     path = os.path.join(os.path.expanduser("~"), "Desktop",
            f"jarvis_{datetime.datetime.now().strftime('%H%M%S')}.png")
     pyautogui.screenshot().save(path)
-    print(f"[ACTION] screenshot → {path}")
+    print(f"[ACTION] screenshot -> {path}")
 
 # ── skills ────────────────────────────────────────────────────────────────────
 def s_time():   return f"The time is {datetime.datetime.now().strftime('%I:%M %p')}, sir."
@@ -218,7 +218,7 @@ def detect_and_run(raw):
     if has(cmd,"open","go to","browse","navigate to","launch"):
         for site in SITES:
             if site in cmd:
-                print(f"[INTENT] → open_website ({site})")
+                print(f"[INTENT] -> open_website ({site})")
                 return "open_website", s_open_site(site)
 
     # search
@@ -227,14 +227,14 @@ def detect_and_run(raw):
         q = after(cmd,"search for","look up","find information about",
                      "tell me about","who is","what is","find out about","search")
         if q and len(q) > 2:
-            print(f"[INTENT] → search ('{q}')")
+            print(f"[INTENT] -> search ('{q}')")
             return "search", s_search(q)
 
     # open app — after website check
     if has(cmd,"open ","launch ","start ","run "):
         app = after(cmd,"open","launch","start","run")
         if app and len(app) > 1 and not any(s in app for s in SITES):
-            print(f"[INTENT] → open_app ('{app}')")
+            print(f"[INTENT] -> open_app ('{app}')")
             return "open_app", s_open_app(app)
 
     # math
@@ -246,5 +246,5 @@ def detect_and_run(raw):
     if has(cmd,"goodbye","bye","exit jarvis","stop jarvis","shut down jarvis"):
         return "stop", "Goodbye, sir."
 
-    print("[INTENT] → chat (no skill matched)")
+    print("[INTENT] -> chat (no skill matched)")
     return "chat", None
