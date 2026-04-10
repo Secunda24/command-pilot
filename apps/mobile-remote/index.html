@@ -78,9 +78,19 @@
       font-size:11px;
       letter-spacing:3px;
       color:var(--cyan);
-      margin-bottom:6px;
+      margin-bottom:4px;
       height:16px;
       transition:color 0.3s;
+    }
+    #live-transcript{
+      text-align:center;
+      color:var(--subtext);
+      font-size:12px;
+      min-height:16px;
+      padding:0 18px 8px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
 
     #connect-panel{
@@ -258,6 +268,7 @@
     <canvas id="ring" width="180" height="180"></canvas>
   </div>
   <div id="status-label">DISCONNECTED</div>
+  <div id="live-transcript"></div>
 
   <div id="connect-panel">
     <h2>CONNECT</h2>
@@ -325,6 +336,10 @@
     let recognition = null;
     let mobileVoice = null;
     let voiceEnabled = localStorage.getItem(VOICE_ENABLED_KEY) !== "0";
+    let liveTranscript = "";
+    let finalTranscript = "";
+    let manualStopRequested = false;
+    let recognitionSubmitted = false;
 
     const connectPanel = document.getElementById("connect-panel");
     const offlineBar = document.getElementById("offline-bar");
@@ -335,6 +350,12 @@
     const voiceBtn = document.getElementById("voice-btn");
     const micBtn = document.getElementById("mic-btn");
     const cmdInput = document.getElementById("cmd-input");
+    const liveTranscriptEl = document.getElementById("live-transcript");
+
+    function setLiveTranscript(text) {
+      const value = (text || "").trim();
+      liveTranscriptEl.textContent = value ? `Heard: ${value}` : "";
+    }
 
     function setStatus(status) {
       jarvisStatus = status;
@@ -413,12 +434,13 @@
       if (!voices.length) return;
 
       const englishVoices = voices.filter((v) => /^en[-_]/i.test(v.lang));
-      mobileVoice =
-        englishVoices.find((v) => /female/i.test(v.name)) ||
-        englishVoices.find((v) => /google|samantha|zira|natural/i.test(v.name)) ||
-        englishVoices[0] ||
-        voices[0] ||
-        null;
+      const patterns = [/zira/i, /aria/i, /jenny/i, /female/i, /susan/i, /english/i];
+      let selected = null;
+      for (const pattern of patterns) {
+        selected = englishVoices.find((voice) => pattern.test(voice.name));
+        if (selected) break;
+      }
+      mobileVoice = selected || englishVoices[0] || voices[0] || null;
     }
 
     function speakReply(text) {
@@ -568,23 +590,42 @@
 
       recognition.onstart = () => {
         listening = true;
+        manualStopRequested = false;
+        recognitionSubmitted = false;
+        liveTranscript = "";
+        finalTranscript = "";
         micBtn.classList.add("recording");
         setStatus("LISTENING");
+        setLiveTranscript("");
       };
 
       recognition.onresult = (event) => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; i += 1) {
-          transcript += event.results[i][0].transcript;
+        let interim = "";
+        let confirmed = "";
+        for (let i = 0; i < event.results.length; i += 1) {
+          const fragment = event.results[i][0].transcript.trim();
+          if (!fragment) continue;
+          if (event.results[i].isFinal) {
+            confirmed += (confirmed ? " " : "") + fragment;
+          } else {
+            interim += (interim ? " " : "") + fragment;
+          }
         }
-        transcript = transcript.trim();
-        if (transcript) {
-          cmdInput.value = transcript;
+
+        if (confirmed) {
+          finalTranscript = confirmed;
+        }
+        liveTranscript = interim;
+        const combined = (finalTranscript + " " + liveTranscript).trim();
+        if (combined) {
+          cmdInput.value = combined;
+          setLiveTranscript(combined);
         }
 
         const lastResult = event.results[event.results.length - 1];
-        if (lastResult && lastResult.isFinal && transcript) {
-          sendCommand(transcript);
+        if (lastResult && lastResult.isFinal && combined && !recognitionSubmitted) {
+          recognitionSubmitted = true;
+          sendCommand(combined);
         }
       };
 
@@ -601,12 +642,31 @@
                   ? "Speech recognition network issue. Check your connection."
                   : "Voice input error. Tap mic and try again.";
         addMessage("jarvis", readable, "error");
+        setLiveTranscript("");
       };
 
       recognition.onend = () => {
+        const combined = (finalTranscript + " " + liveTranscript).trim();
+        if (
+          manualStopRequested &&
+          combined &&
+          !recognitionSubmitted &&
+          ws &&
+          ws.readyState === WebSocket.OPEN
+        ) {
+          recognitionSubmitted = true;
+          sendCommand(combined);
+        }
+
         listening = false;
+        manualStopRequested = false;
+        liveTranscript = "";
+        finalTranscript = "";
         micBtn.classList.remove("recording");
-        setStatus(pcOnline ? "STANDBY" : "DISCONNECTED");
+        setLiveTranscript("");
+        if (jarvisStatus !== "THINKING") {
+          setStatus(pcOnline ? "STANDBY" : "DISCONNECTED");
+        }
       };
 
       micBtn.onclick = async () => {
@@ -618,6 +678,7 @@
         }
 
         if (listening) {
+          manualStopRequested = true;
           recognition.stop();
           return;
         }
