@@ -6,8 +6,10 @@ This v1 scaffold includes:
 
 - A Tauri-ready Windows desktop shell built with React + TypeScript
 - A Jetpack Compose Android companion shell
+- A mobile-web remote UI for phone/tablet/browser control
 - A shared TypeScript core for skills, workflows, command planning, safety rules, and demo data
 - A local orchestrator service scaffold with SQLite schema and seed bootstrap
+- A relay service + PC agent bundle for remote command delivery
 
 ## Product Shape
 
@@ -15,7 +17,9 @@ CommandPilot is designed for one trusted owner, not multi-tenant SaaS.
 
 - **Windows desktop app**: primary execution agent for PC tasks
 - **Android app**: remote control, approval, notification, and mobile companion
+- **Mobile web remote app**: browser-based control from any device
 - **Shared orchestrator**: command parsing, planning, routing, safety, and activity logging
+- **Remote relay + PC agent**: internet bridge for phone/browser command routing
 
 ## Repo Layout
 
@@ -24,10 +28,13 @@ commandpilot/
   apps/
     android/                 # Kotlin + Jetpack Compose companion app
     desktop/                 # Tauri-ready React + TypeScript desktop shell
+    mobile-remote/           # Mobile web remote UI (phone/tablet/browser)
   packages/
     core/                    # Shared domain types, skill registry, planner, demo seeds, Echo voice model
   services/
     local-orchestrator/      # Local service scaffold, SQLite schema, adapters, in-memory repo
+    remote-relay/            # WebSocket relay server for remote device access
+    remote-agent/            # PC-side Python agent bundle used by remote relay
   docs/
     architecture.md          # System responsibilities and future expansion notes
 ```
@@ -90,6 +97,18 @@ npm install
 npm run dev:desktop
 ```
 
+### Run the local bridge
+
+```bash
+npm run dev:bridge
+```
+
+### Run the remote relay service
+
+```bash
+npm run dev:remote-relay
+```
+
 ### Build the desktop frontend
 
 ```bash
@@ -149,13 +168,43 @@ npm run seed:demo
 
 Open `apps/android` in Android Studio and sync Gradle.
 
+## Mobile Web Remote (Any Device)
+
+The `apps/mobile-remote` UI can be opened on any phone, tablet, or desktop browser once the relay is running.
+
+### Relay deployment
+
+`services/remote-relay` includes a Render-ready setup:
+
+- `services/remote-relay/src/server.js`
+- `services/remote-relay/render.yaml`
+
+Set the relay `AUTH_TOKEN` in your deployment provider.
+
+### PC agent
+
+Run the Python agent from `services/remote-agent` on your Windows machine:
+
+```bash
+python services/remote-agent/pc_agent.py
+```
+
+Use environment variables to configure:
+
+- `RELAY_URL` (e.g. `wss://your-relay-url.onrender.com`)
+- `AUTH_TOKEN`
+- `COMMANDPILOT_BRIDGE_URL` (optional, default `http://127.0.0.1:8787`)
+- `OLLAMA_MODEL` (optional, default `gemma:2b`)
+
+The PC agent now calls `POST /api/command/execute` on the local bridge first, so mobile and desktop run through the same planner and runtime actions.
+
 ## Voice Support
 
-Voice is designed as a provider abstraction for v1:
+Voice currently supports:
 
-- Desktop: browser/system speech synthesis placeholder
-- Android: device TTS placeholder
-- Future: premium provider hook without reworking the UI
+- Desktop: browser/system speech synthesis
+- Mobile web remote: Web Speech API mic input + spoken replies toggle
+- PC agent: Windows SAPI voice profile (Volume 100 / Rate 0) with `pyttsx3` fallback
 
 Settings already include:
 

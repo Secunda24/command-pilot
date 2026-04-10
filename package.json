@@ -6,7 +6,8 @@
   "workspaces": [
     "apps/desktop",
     "packages/core",
-    "services/local-orchestrator"
+    "services/local-orchestrator",
+    "services/remote-relay"
   ],
   "engines": {
     "node": "20.20.2"
@@ -14,6 +15,7 @@
   "scripts": {
     "dev:desktop": "npm run dev --workspace @commandpilot/desktop",
     "dev:bridge": "npm run dev --workspace @commandpilot/local-orchestrator",
+    "dev:remote-relay": "npm run dev --workspace @commandpilot/remote-relay",
     "build:desktop": "npm run build --workspace @commandpilot/desktop",
     "typecheck:core": "npm run typecheck --workspace @commandpilot/core",
     "typecheck:service": "npm run typecheck --workspace @commandpilot/local-orchestrator",

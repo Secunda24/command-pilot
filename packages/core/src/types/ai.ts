@@ -18,7 +18,7 @@ export interface EchoAiInterpretation {
 
 export interface EchoAiInterpretResponse {
   ok: boolean;
-  provider: "openai";
+  provider: "openai" | "ollama";
   model: string;
   interpretation: EchoAiInterpretation;
 }

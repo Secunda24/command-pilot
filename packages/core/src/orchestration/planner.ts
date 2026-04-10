@@ -847,6 +847,39 @@ export function planCommand(commandText: string, options: PlannerRuntimeOptions 
     );
   }
 
+  const googleSearchMatch =
+    commandText.match(/^(?:echo,\s*)?search (?:google\s+)?for (?<query>.+)$/i) ??
+    commandText.match(/^(?:echo,\s*)?(?:google(?:\s+search)?|search google)\s+(?<query>.+)$/i) ??
+    commandText.match(/^(?:can|could|would|will)\s+(?:you|u)\s+search (?:google\s+)?for (?<query>.+)$/i) ??
+    commandText.match(/^please\s+search (?:google\s+)?for (?<query>.+)$/i);
+
+  if (googleSearchMatch?.groups?.query) {
+    const searchQuery = cleanQuotedText(googleSearchMatch.groups.query);
+    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+
+    return planFromSteps(
+      commandText,
+      "search_google",
+      `searched Google for ${searchQuery}`,
+      [
+        {
+          id: "search-google-1",
+          title: "Search Google",
+          description: `Search Google for ${searchQuery}.`,
+          skillKey: "open_website",
+          target: "pc",
+          safetyLevel: "safe",
+          approvalRequired: false,
+          parameters: {
+            url: searchUrl,
+            successMessage: `Done. I've searched Google for ${searchQuery}.`
+          }
+        }
+      ],
+      ["Open Chrome", "Search Chrome for CommandPilot roadmap"]
+    );
+  }
+
   const openInChromeMatch = commandText.match(
     /^(?:echo,\s*)?(?:open|launch|start) (?<target>.+?) in (?:google\s+)?chrome$/i
   ) ??

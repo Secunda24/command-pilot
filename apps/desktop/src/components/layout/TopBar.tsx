@@ -1,5 +1,5 @@
 import { Bell, Mic, Volume2, VolumeX } from "lucide-react";
-import { VoiceOrb } from "../voice/VoiceOrb";
+import { VoiceOrb, type EchoRingState } from "../voice/VoiceOrb";
 
 interface TopBarProps {
   status: string;
@@ -32,6 +32,32 @@ export function TopBar({
         ? "Stop Listening"
         : "Start Listening";
 
+  function resolveRingState(): EchoRingState {
+    if (!voiceEnabled) {
+      return "DISABLED";
+    }
+
+    if (listening) {
+      return "LISTENING";
+    }
+
+    if (status === "Awaiting approval" || status === "Echo is working") {
+      return "THINKING";
+    }
+
+    if (status === "Action blocked") {
+      return "ALERT";
+    }
+
+    if (muted) {
+      return "MUTED";
+    }
+
+    return "STANDBY";
+  }
+
+  const ringState = resolveRingState();
+
   return (
     <header className="topbar">
       <div className="topbar__copy">
@@ -41,7 +67,7 @@ export function TopBar({
       </div>
 
       <div className="topbar__actions">
-        <VoiceOrb active={listening || (voiceEnabled && !muted)} muted={muted} label={status} />
+        <VoiceOrb state={ringState} label={status} detail={voiceCommandStatus} />
         <button
           type="button"
           className={`icon-button ${listening ? "is-listening" : ""}`}

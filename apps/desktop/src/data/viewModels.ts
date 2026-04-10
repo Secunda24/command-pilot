@@ -59,10 +59,10 @@ export const settingsSections = [
 ];
 
 export const pairingChecklist = [
-  "Open the Android companion and tap Pair Device.",
-  "Enter the six-character pairing code or scan the QR placeholder.",
-  "Approve the trusted-device request on both devices.",
-  "Echo will begin syncing approvals and notifications."
+  "Start the remote relay and copy your AUTH_TOKEN.",
+  "Open the mobile remote URL on any phone, tablet, or browser.",
+  "Enter your token and wait for the PC agent to connect.",
+  "Echo will sync remote commands, approvals, and live status updates."
 ];
 
 export function formatTimestamp(iso: string): string {

@@ -1,8 +1,14 @@
 import {
+  autoApproveExecutionResult,
   linkedApps,
   normalizeTrustedWebsiteHosts,
+  planCommand,
+  simulateExecution,
   trustedWebsiteHosts as defaultTrustedWebsiteHosts,
-  type EchoAiInterpretRequest
+  type CommandExecutionResult,
+  type EchoAiConversationMessage,
+  type EchoAiInterpretRequest,
+  type PlannedCommandStep
 } from "@commandpilot/core";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -17,9 +23,9 @@ import { dirname, extname, normalize, resolve } from "node:path";
 import { loadCommandPilotEnv } from "./runtime/env";
 import { getLinkedAppStatus, launchLinkedApp, openUrl } from "./runtime/linkedApps";
 import {
-  interpretCommandWithOpenAi,
+  interpretCommandWithAi,
+  isAiConfigured,
   isEchoAiBridgeError,
-  isOpenAiConfigured
 } from "./runtime/openaiResponses";
 
 const PORT = 8787;
@@ -31,6 +37,16 @@ const defaultApprovedRoots = [
 ];
 const allowedTextExtensions = new Set([".txt", ".md", ".json", ".csv", ".rtf"]);
 const MAX_TYPED_TEXT_CHARACTERS = 1200;
+const APP_READY_RETRY_DELAYS_MS = [1000, 1500, 2000, 2500, 3000];
+const DANGEROUS_TYPED_COMMAND_PATTERNS = [
+  /\bgit\s+reset\s+--hard\b/i,
+  /\brm\s+-rf\b/i,
+  /\bdel(?:ete)?\b/i,
+  /\bformat\s+[a-z]:/i,
+  /\bshutdown\b/i,
+  /\bpowershell\b/i,
+  /\bcmd\s*\/c\b/i
+];
 
 interface RuntimeSafetySettings {
   approvedRoots: string[];
@@ -76,6 +92,13 @@ interface RuntimeSettingsRequest {
   approvedRoots?: string[];
   trustedWebsiteHosts?: string[];
   approvedLinkedAppKeys?: string[];
+}
+
+interface CommandExecuteRequest {
+  command?: string;
+  conversation?: EchoAiConversationMessage[];
+  forceAiInterpret?: boolean;
+  autoApprove?: boolean;
 }
 
 interface DirectoryEntryPayload {
@@ -246,6 +269,366 @@ function applyRuntimeSettingsPatch(patch: RuntimeSettingsRequest): void {
 
     runtimeSafetySettings.approvedLinkedAppKeys =
       sanitizedKeys.length > 0 ? [...new Set(sanitizedKeys)] : linkedApps.map((app) => app.key);
+  }
+}
+
+function sleep(delayMs: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
+}
+
+function basename(targetPath: string): string {
+  const segments = targetPath.split(/[/\\]/).filter(Boolean);
+  return segments[segments.length - 1] ?? targetPath;
+}
+
+function shouldCreateFolder(step: PlannedCommandStep, planId: string): boolean {
+  return planId.includes("cmd") && step.parameters?.path?.endsWith("\\Echo Test Folder") === true;
+}
+
+function formatEntries(entries: DirectoryEntryPayload[]): string {
+  if (entries.length === 0) {
+    return "The folder is currently empty.";
+  }
+
+  const preview = entries
+    .slice(0, 6)
+    .map((entry) => (entry.kind === "folder" ? `${entry.name}/` : entry.name))
+    .join(", ");
+
+  if (entries.length <= 6) {
+    return preview;
+  }
+
+  return `${preview}, and ${entries.length - 6} more.`;
+}
+
+function shouldInterpretWithAi(commandText: string): boolean {
+  const trimmed = commandText.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/^(can|could|would|will)\s+(you|u)\b/i.test(trimmed) || /^please\b/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/^(?:hey\s+)?echo(?:\s+|,\s*)/i.test(trimmed)) {
+    return false;
+  }
+
+  if (
+    /^(open|launch|start|run|create|show|check|find|search|list|type|notify|lock|close|minimize|go)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    /\?$/.test(trimmed) ||
+    /^(what|why|how|who|when|where|tell me|explain|help)\b/i.test(trimmed)
+  );
+}
+
+function sanitizeConversation(value: unknown): EchoAiConversationMessage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const messages: EchoAiConversationMessage[] = [];
+  for (const candidate of value.slice(-6)) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+
+    const maybeMessage = candidate as { role?: unknown; text?: unknown };
+    if (
+      (maybeMessage.role === "assistant" || maybeMessage.role === "user") &&
+      typeof maybeMessage.text === "string" &&
+      maybeMessage.text.trim()
+    ) {
+      messages.push({
+        role: maybeMessage.role,
+        text: maybeMessage.text
+      });
+    }
+  }
+
+  return messages;
+}
+
+function validateTypingRequest(step: PlannedCommandStep): void {
+  const typedText = step.parameters?.text ?? "";
+  if (typedText.length > MAX_TYPED_TEXT_CHARACTERS) {
+    throw new Error(
+      `That typing request is too large for one pass. Keep it under ${MAX_TYPED_TEXT_CHARACTERS} characters.`
+    );
+  }
+
+  const shouldPressEnter = step.parameters?.pressEnter === "true";
+  const allowCommandExecution = step.parameters?.allowCommandExecution === "true";
+  const looksDangerous = DANGEROUS_TYPED_COMMAND_PATTERNS.some((pattern) => pattern.test(typedText));
+
+  if (shouldPressEnter && looksDangerous && !allowCommandExecution) {
+    throw new Error('That looks like a command execution payload. Say "Echo, force type ..." to allow it.');
+  }
+}
+
+async function verifyLinkedAppLaunch(
+  step: PlannedCommandStep,
+  launchResponse: { message: string; running?: boolean; appName?: string }
+): Promise<string> {
+  if (launchResponse.running === true) {
+    return launchResponse.message;
+  }
+
+  for (const delayMs of APP_READY_RETRY_DELAYS_MS) {
+    await sleep(delayMs);
+    const status = await getLinkedAppStatus({
+      appKey: step.parameters?.appKey,
+      appName: step.parameters?.appName
+    });
+
+    if (status.ok && status.running === true) {
+      return status.message;
+    }
+  }
+
+  const appName = step.parameters?.appName ?? launchResponse.appName ?? "that app";
+  throw new Error(
+    `${appName} did not come online yet. Check its local dependencies, then try again.`
+  );
+}
+
+function isActionableCompletedStep(step: PlannedCommandStep): boolean {
+  if (step.status !== "completed") {
+    return false;
+  }
+
+  if (
+    step.parameters?.path &&
+    ["open_folder", "open_file", "create_folder", "create_text_file", "list_folder_contents"].includes(
+      step.skillKey
+    )
+  ) {
+    return true;
+  }
+
+  if (step.parameters?.text && step.skillKey === "type_text") {
+    return true;
+  }
+
+  if (step.parameters?.url && step.skillKey === "open_website") {
+    return true;
+  }
+
+  if (step.parameters?.appName && ["open_app", "check_app_status"].includes(step.skillKey)) {
+    return true;
+  }
+
+  return step.skillKey === "launch_custom_app_page" && Boolean(step.parameters?.destination);
+}
+
+async function runCommandStep(step: PlannedCommandStep, planId: string): Promise<string> {
+  const targetPath = step.parameters?.path;
+  const customSuccessMessage = step.parameters?.successMessage;
+  const allowOutsideApprovedRoots = step.safetyLevel === "confirm";
+
+  if (step.skillKey === "open_app") {
+    const launchResponse = await launchLinkedApp({
+      appKey: step.parameters?.appKey,
+      appName: step.parameters?.appName,
+      routePath: step.parameters?.routePath,
+      routeName: step.parameters?.routeName
+    });
+
+    if (!launchResponse.ok) {
+      throw new Error(launchResponse.message);
+    }
+
+    const verifiedMessage = await verifyLinkedAppLaunch(step, launchResponse);
+    return customSuccessMessage ?? verifiedMessage;
+  }
+
+  if (step.skillKey === "launch_custom_app_page") {
+    const destination = step.parameters?.destination?.trim() || "PromptPilot Studio";
+    const launchResponse = await launchLinkedApp({
+      appName: destination
+    });
+
+    if (!launchResponse.ok) {
+      throw new Error(launchResponse.message);
+    }
+
+    const verifiedMessage = await verifyLinkedAppLaunch(
+      {
+        ...step,
+        parameters: {
+          ...step.parameters,
+          appName: destination
+        }
+      },
+      launchResponse
+    );
+    return customSuccessMessage ?? verifiedMessage;
+  }
+
+  if (step.skillKey === "check_app_status") {
+    const statusResponse = await getLinkedAppStatus({
+      appKey: step.parameters?.appKey,
+      appName: step.parameters?.appName
+    });
+
+    if (!statusResponse.ok) {
+      throw new Error(statusResponse.message);
+    }
+
+    return customSuccessMessage ?? statusResponse.message;
+  }
+
+  if (step.skillKey === "open_folder") {
+    if (!targetPath) {
+      throw new Error("The command is missing a path.");
+    }
+
+    const openResponse = openFolder(
+      targetPath,
+      shouldCreateFolder(step, planId),
+      allowOutsideApprovedRoots
+    );
+    if (!openResponse.ok) {
+      throw new Error(openResponse.message);
+    }
+    return customSuccessMessage ?? `Done. I've opened ${basename(targetPath)}.`;
+  }
+
+  if (step.skillKey === "open_file") {
+    if (!targetPath) {
+      throw new Error("The command is missing a path.");
+    }
+
+    const openResponse = openFile(targetPath, allowOutsideApprovedRoots);
+    if (!openResponse.ok) {
+      throw new Error(openResponse.message);
+    }
+    return customSuccessMessage ?? `Done. I've opened ${basename(targetPath)}.`;
+  }
+
+  if (step.skillKey === "open_website") {
+    const targetUrl = step.parameters?.url;
+    if (!targetUrl) {
+      throw new Error("The command is missing a website URL.");
+    }
+
+    const openResponse = openBrowserPage(targetUrl, step.parameters?.preferredBrowser ?? "system");
+    if (!openResponse.ok) {
+      throw new Error(openResponse.message);
+    }
+    return customSuccessMessage ?? openResponse.message;
+  }
+
+  if (step.skillKey === "create_folder") {
+    if (!targetPath) {
+      throw new Error("The command is missing a path.");
+    }
+
+    const createResponse = createFolder(targetPath, allowOutsideApprovedRoots);
+    if (!createResponse.ok) {
+      throw new Error(createResponse.message);
+    }
+    return customSuccessMessage ?? `Done. I created ${basename(targetPath)}.`;
+  }
+
+  if (step.skillKey === "create_text_file") {
+    if (!targetPath) {
+      throw new Error("The command is missing a path.");
+    }
+
+    const createResponse = createTextFile(
+      targetPath,
+      step.parameters?.content ?? "Echo created this file.",
+      false,
+      allowOutsideApprovedRoots
+    );
+    if (!createResponse.ok) {
+      throw new Error(createResponse.message);
+    }
+    return customSuccessMessage ?? `Done. I created ${basename(targetPath)}.`;
+  }
+
+  if (step.skillKey === "list_folder_contents") {
+    if (!targetPath) {
+      throw new Error("The command is missing a path.");
+    }
+
+    const listResponse = listFolderContents(targetPath);
+    if (!listResponse.ok) {
+      throw new Error(listResponse.message);
+    }
+
+    return (
+      customSuccessMessage ??
+      `I found ${listResponse.entries?.length ?? 0} items in ${basename(targetPath)}: ${formatEntries(
+        listResponse.entries ?? []
+      )}`
+    );
+  }
+
+  if (step.skillKey === "type_text") {
+    validateTypingRequest(step);
+    const typeResponse = typeTextIntoActiveWindow(
+      step.parameters?.text ?? "",
+      step.parameters?.pressEnter === "true"
+    );
+
+    if (!typeResponse.ok) {
+      throw new Error(typeResponse.message);
+    }
+
+    return customSuccessMessage ?? typeResponse.message;
+  }
+
+  return "";
+}
+
+async function executeRuntimeActions(
+  result: CommandExecutionResult
+): Promise<{ ok: boolean; message: string }> {
+  const actionableSteps = result.steps.filter((step) => isActionableCompletedStep(step));
+
+  if (actionableSteps.length === 0) {
+    return {
+      ok: true,
+      message: result.echoMessage
+    };
+  }
+
+  let latestMessage = result.echoMessage;
+  let lastStepId = actionableSteps[0]?.id ?? "";
+
+  try {
+    for (const step of actionableSteps) {
+      lastStepId = step.id;
+      const runtimeMessage = await runCommandStep(step, result.plan.id);
+      if (runtimeMessage.trim()) {
+        latestMessage = runtimeMessage;
+      }
+    }
+
+    return {
+      ok: true,
+      message: latestMessage
+    };
+  } catch (error) {
+    const failingStep = result.steps.find((step) => step.id === lastStepId);
+    const stepLabel = failingStep?.title ? failingStep.title.toLowerCase() : "that action";
+    const errorMessage =
+      error instanceof Error ? error.message : "The local desktop bridge was unavailable.";
+
+    return {
+      ok: false,
+      message: `I couldn't complete ${stepLabel}. ${errorMessage}`
+    };
   }
 }
 
@@ -598,7 +981,7 @@ const server = createServer(async (request, response) => {
       ok: true,
       service: "commandpilot-local-bridge",
       port: PORT,
-      aiConfigured: isOpenAiConfigured()
+      aiConfigured: isAiConfigured()
     });
     return;
   }
@@ -643,13 +1026,103 @@ const server = createServer(async (request, response) => {
         return;
       }
 
-      const result = await interpretCommandWithOpenAi({
+      const result = await interpretCommandWithAi({
         command: body.command,
         conversation: Array.isArray(body.conversation) ? body.conversation : []
       });
       sendJson(response, 200, {
         ok: true,
         ...result
+      });
+      return;
+    } catch (error) {
+      if (isEchoAiBridgeError(error)) {
+        sendJson(response, error.statusCode, { ok: false, message: error.message });
+        return;
+      }
+
+      sendJson(response, 400, { ok: false, message: "Invalid JSON body." });
+      return;
+    }
+  }
+
+  if (request.method === "POST" && request.url === "/api/command/execute") {
+    try {
+      const body = await readJsonBody<CommandExecuteRequest>(request);
+      const rawCommand = typeof body.command === "string" ? body.command.trim() : "";
+
+      if (!rawCommand) {
+        sendJson(response, 400, { ok: false, message: "A command is required." });
+        return;
+      }
+
+      const shouldUseAi = body.forceAiInterpret === true || shouldInterpretWithAi(rawCommand);
+      const conversation = sanitizeConversation(body.conversation);
+      let normalizedCommand = rawCommand;
+      let provider: "openai" | "ollama" | undefined;
+      let model: string | undefined;
+
+      if (shouldUseAi) {
+        try {
+          const aiResult = await interpretCommandWithAi({
+            command: rawCommand,
+            conversation
+          });
+
+          provider = aiResult.provider;
+          model = aiResult.model;
+
+          if (aiResult.interpretation.mode === "respond") {
+            sendJson(response, 200, {
+              ok: true,
+              status: "responded",
+              intent: "conversation",
+              message: aiResult.interpretation.assistantReply,
+              normalizedCommand: null,
+              provider,
+              model
+            });
+            return;
+          }
+
+          if (aiResult.interpretation.normalizedCommand) {
+            normalizedCommand = aiResult.interpretation.normalizedCommand;
+          }
+        } catch (error) {
+          if (body.forceAiInterpret === true) {
+            if (isEchoAiBridgeError(error)) {
+              sendJson(response, error.statusCode, { ok: false, message: error.message });
+              return;
+            }
+
+            sendJson(response, 502, { ok: false, message: "AI interpretation failed unexpectedly." });
+            return;
+          }
+        }
+      }
+
+      let executionResult = simulateExecution(
+        planCommand(normalizedCommand, {
+          approvedRoots: runtimeSafetySettings.approvedRoots,
+          trustedWebsiteHosts: getTrustedWebsiteHosts(),
+          approvedLinkedAppKeys: getApprovedLinkedAppKeys()
+        })
+      );
+
+      const autoApprove = body.autoApprove !== false;
+      if (autoApprove && executionResult.status === "awaiting_approval") {
+        executionResult = autoApproveExecutionResult(executionResult, executionResult.plan.echo.success);
+      }
+
+      const runtimeResult = await executeRuntimeActions(executionResult);
+      sendJson(response, 200, {
+        ok: runtimeResult.ok,
+        status: runtimeResult.ok ? executionResult.status : "failed",
+        intent: executionResult.plan.intent,
+        message: runtimeResult.message,
+        normalizedCommand,
+        provider,
+        model
       });
       return;
     } catch (error) {

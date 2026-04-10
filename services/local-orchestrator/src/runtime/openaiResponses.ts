@@ -9,7 +9,11 @@ import { loadCommandPilotEnv } from "./env";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
-const REQUEST_TIMEOUT_MS = 15000;
+const DEFAULT_OLLAMA_MODEL = "gemma:2b";
+const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
+const REQUEST_TIMEOUT_MS = 45000;
+
+type AiProviderPreference = "auto" | "openai" | "ollama";
 
 const interpretationSchema = {
   type: "object",
@@ -51,6 +55,26 @@ function getOpenAiConfig(): { apiKey: string; model: string } | null {
     apiKey,
     model: process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL
   };
+}
+
+function getOllamaConfig(): { baseUrl: string; model: string } {
+  loadCommandPilotEnv();
+
+  const baseUrl = (process.env.OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL).replace(/\/+$/, "");
+  const model = process.env.OLLAMA_MODEL?.trim() || DEFAULT_OLLAMA_MODEL;
+
+  return { baseUrl, model };
+}
+
+function getAiProviderPreference(): AiProviderPreference {
+  loadCommandPilotEnv();
+
+  const configured = process.env.COMMANDPILOT_AI_PROVIDER?.trim().toLowerCase();
+  if (configured === "openai" || configured === "ollama") {
+    return configured;
+  }
+
+  return "auto";
 }
 
 function truncateText(value: string, limit: number): string {
@@ -106,6 +130,20 @@ function buildInstructions(): string {
   ].join("\n");
 }
 
+function buildOllamaInstructions(): string {
+  return [
+    "You are Echo, the assistant inside CommandPilot.",
+    "Return JSON only with keys: mode, normalized_command, assistant_reply.",
+    "mode must be execute or respond.",
+    "Default to respond unless the user explicitly asks Echo to perform an action.",
+    "Use execute for imperative task requests like: open, launch, start, run, create, show, check, find, search, type, go to, navigate.",
+    "Use respond for greetings, casual conversation, and general Q&A.",
+    "For execute mode, normalized_command should be concise and start with Echo,.",
+    "For respond mode, normalized_command must be null.",
+    "assistant_reply must be short and helpful."
+  ].join("\n");
+}
+
 function buildConversationInput(payload: EchoAiInterpretRequest): string {
   const conversationLines =
     payload.conversation.length === 0
@@ -152,13 +190,34 @@ function extractResponseText(payload: unknown): string {
   return fragments.join("\n").trim();
 }
 
+function extractOllamaResponseText(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const record = payload as {
+    message?: { content?: unknown };
+    response?: unknown;
+  };
+
+  if (typeof record.message?.content === "string" && record.message.content.trim()) {
+    return record.message.content.trim();
+  }
+
+  if (typeof record.response === "string" && record.response.trim()) {
+    return record.response.trim();
+  }
+
+  return "";
+}
+
 function ensureEchoPrefix(command: string): string {
   return /^echo,\s*/i.test(command) ? command.trim() : `Echo, ${command.trim()}`;
 }
 
 function parseInterpretation(rawText: string): EchoAiInterpretation {
   if (!rawText.trim()) {
-    throw new EchoAiBridgeError("OpenAI returned an empty interpretation.", 502);
+    throw new EchoAiBridgeError("AI returned an empty interpretation.", 502);
   }
 
   let parsed: {
@@ -170,20 +229,20 @@ function parseInterpretation(rawText: string): EchoAiInterpretation {
   try {
     parsed = JSON.parse(rawText) as typeof parsed;
   } catch {
-    throw new EchoAiBridgeError("OpenAI returned invalid JSON for the interpretation.", 502);
+    throw new EchoAiBridgeError("AI returned invalid JSON for the interpretation.", 502);
   }
 
   if (parsed.mode !== "execute" && parsed.mode !== "respond") {
-    throw new EchoAiBridgeError("OpenAI returned an unsupported interpretation mode.", 502);
+    throw new EchoAiBridgeError("AI returned an unsupported interpretation mode.", 502);
   }
 
   if (typeof parsed.assistant_reply !== "string") {
-    throw new EchoAiBridgeError("OpenAI returned an invalid assistant reply.", 502);
+    throw new EchoAiBridgeError("AI returned an invalid assistant reply.", 502);
   }
 
   const assistantReply = parsed.assistant_reply.trim();
   if (!assistantReply) {
-    throw new EchoAiBridgeError("OpenAI returned a blank assistant reply.", 502);
+    throw new EchoAiBridgeError("AI returned a blank assistant reply.", 502);
   }
 
   if (parsed.mode === "respond") {
@@ -195,7 +254,7 @@ function parseInterpretation(rawText: string): EchoAiInterpretation {
   }
 
   if (typeof parsed.normalized_command !== "string" || !parsed.normalized_command.trim()) {
-    throw new EchoAiBridgeError("OpenAI returned an executable mode without a command.", 502);
+    throw new EchoAiBridgeError("AI returned execute mode without a command.", 502);
   }
 
   return {
@@ -210,19 +269,52 @@ function getErrorMessage(payload: unknown): string | null {
     return null;
   }
 
-  const record = payload as { error?: { message?: unknown } };
-  return typeof record.error?.message === "string" ? record.error.message : null;
+  const record = payload as {
+    error?: { message?: unknown } | unknown;
+  };
+
+  if (typeof record.error === "string") {
+    return record.error;
+  }
+
+  if (record.error && typeof record.error === "object") {
+    const errorObject = record.error as { message?: unknown };
+    if (typeof errorObject.message === "string") {
+      return errorObject.message;
+    }
+  }
+
+  return null;
 }
 
 export function isOpenAiConfigured(): boolean {
   return getOpenAiConfig() !== null;
 }
 
+export function isOllamaConfigured(): boolean {
+  const config = getOllamaConfig();
+  return Boolean(config.baseUrl && config.model);
+}
+
+export function isAiConfigured(): boolean {
+  const provider = getAiProviderPreference();
+
+  if (provider === "openai") {
+    return isOpenAiConfigured();
+  }
+
+  if (provider === "ollama") {
+    return isOllamaConfigured();
+  }
+
+  return isOllamaConfigured() || isOpenAiConfigured();
+}
+
 export function isEchoAiBridgeError(error: unknown): error is EchoAiBridgeError {
   return error instanceof EchoAiBridgeError;
 }
 
-export async function interpretCommandWithOpenAi(
+async function interpretCommandWithOpenAiInternal(
   payload: EchoAiInterpretRequest
 ): Promise<Omit<EchoAiInterpretResponse, "ok">> {
   const command = payload.command.trim();
@@ -232,10 +324,7 @@ export async function interpretCommandWithOpenAi(
 
   const config = getOpenAiConfig();
   if (!config) {
-    throw new EchoAiBridgeError(
-      "OPENAI_API_KEY is not configured for the local CommandPilot bridge.",
-      503
-    );
+    throw new EchoAiBridgeError("OPENAI_API_KEY is not configured for the local CommandPilot bridge.", 503);
   }
 
   const controller = new AbortController();
@@ -295,5 +384,106 @@ export async function interpretCommandWithOpenAi(
     );
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function interpretCommandWithOllamaInternal(
+  payload: EchoAiInterpretRequest
+): Promise<Omit<EchoAiInterpretResponse, "ok">> {
+  const command = payload.command.trim();
+  if (!command) {
+    throw new EchoAiBridgeError("A command is required for AI interpretation.", 400);
+  }
+
+  const config = getOllamaConfig();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${config.baseUrl}/api/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: config.model,
+        stream: false,
+        format: "json",
+        messages: [
+          {
+            role: "system",
+            content: buildOllamaInstructions()
+          },
+          {
+            role: "user",
+            content: buildConversationInput(payload)
+          }
+        ],
+        options: {
+          temperature: 0.1,
+          num_predict: 48,
+          num_ctx: 512
+        }
+      }),
+      signal: controller.signal
+    });
+
+    const responsePayload = (await response.json()) as unknown;
+
+    if (!response.ok) {
+      throw new EchoAiBridgeError(
+        getErrorMessage(responsePayload) || "Ollama could not interpret the request right now.",
+        502
+      );
+    }
+
+    return {
+      provider: "ollama",
+      model: config.model,
+      interpretation: parseInterpretation(extractOllamaResponseText(responsePayload))
+    };
+  } catch (error) {
+    if (error instanceof EchoAiBridgeError) {
+      throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new EchoAiBridgeError("Ollama took too long to answer the request.", 504);
+    }
+
+    throw new EchoAiBridgeError(
+      error instanceof Error ? error.message : "Ollama interpretation failed unexpectedly.",
+      502
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function interpretCommandWithAi(
+  payload: EchoAiInterpretRequest
+): Promise<Omit<EchoAiInterpretResponse, "ok">> {
+  const provider = getAiProviderPreference();
+
+  if (provider === "openai") {
+    return interpretCommandWithOpenAiInternal(payload);
+  }
+
+  if (provider === "ollama") {
+    return interpretCommandWithOllamaInternal(payload);
+  }
+
+  try {
+    return await interpretCommandWithOllamaInternal(payload);
+  } catch (ollamaError) {
+    if (isOpenAiConfigured()) {
+      return interpretCommandWithOpenAiInternal(payload);
+    }
+
+    if (isEchoAiBridgeError(ollamaError)) {
+      throw ollamaError;
+    }
+
+    throw new EchoAiBridgeError("No AI provider is currently available on this machine.", 503);
   }
 }

@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: commandpilot-remote-relay
+    env: node
+    rootDir: services/remote-relay
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: AUTH_TOKEN
+        generateValue: true

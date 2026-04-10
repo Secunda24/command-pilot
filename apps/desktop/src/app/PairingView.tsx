@@ -10,7 +10,7 @@ export function PairingView({ snapshot }: { snapshot: DemoSnapshot }) {
         <section className="panel pairing-hero">
           <SectionHeading
             title="Trusted Device Pairing"
-            copy="Bridge Windows execution with Android approvals and notifications."
+            copy="Bridge Windows execution with mobile/web remote access on any trusted device."
           />
           <div className="pairing-code">
             <span className="eyebrow">Pairing code</span>
@@ -22,8 +22,8 @@ export function PairingView({ snapshot }: { snapshot: DemoSnapshot }) {
             <div />
           </div>
           <div className="pill-row">
-            <span className="status-pill status-pill--success">Trusted phone paired</span>
-            <span className="status-pill status-pill--info">Local auth token active</span>
+            <span className="status-pill status-pill--success">Trusted device ready</span>
+            <span className="status-pill status-pill--info">Relay auth token active</span>
           </div>
         </section>
 
@@ -37,9 +37,9 @@ export function PairingView({ snapshot }: { snapshot: DemoSnapshot }) {
           <div className="notification-preview">
             <Smartphone size={18} />
             <div>
-              <strong>Echo Companion Pixel</strong>
+              <strong>Echo Remote Companion</strong>
               <p className="muted">
-                Ready for remote commands, approval prompts, and completion notifications.
+                Ready for remote commands, approval prompts, and completion notifications on mobile or browser.
               </p>
             </div>
           </div>

@@ -23,6 +23,14 @@ export const trustedWebsiteRules: TrustedWebsiteRule[] = [
     allowSubdomains: true
   },
   {
+    id: "youtube",
+    label: "YouTube",
+    defaultUrl: "https://www.youtube.com",
+    aliases: ["youtube", "yt"],
+    host: "youtube.com",
+    allowSubdomains: true
+  },
+  {
     id: "gmail",
     label: "Gmail",
     defaultUrl: "https://mail.google.com",
@@ -215,6 +223,15 @@ export function resolveTrustedWebsiteTarget(
   rawTarget: string,
   trustedHosts?: string[]
 ): TrustedWebsiteTarget | null {
+  const aliasMatch = resolveTrustedWebsiteAlias(rawTarget);
+  if (aliasMatch) {
+    if (!isTrustedWebsiteHost(aliasMatch.host, trustedHosts)) {
+      return null;
+    }
+
+    return aliasMatch;
+  }
+
   const parsedTarget = parseWebsiteTarget(rawTarget);
   if (parsedTarget) {
     if (!isTrustedWebsiteHost(parsedTarget.host, trustedHosts)) {
@@ -226,15 +243,6 @@ export function resolveTrustedWebsiteTarget(
       ...parsedTarget,
       label: aliasForHost?.label ?? parsedTarget.label
     };
-  }
-
-  const aliasMatch = resolveTrustedWebsiteAlias(rawTarget);
-  if (aliasMatch) {
-    if (!isTrustedWebsiteHost(aliasMatch.host, trustedHosts)) {
-      return null;
-    }
-
-    return aliasMatch;
   }
 
   return null;

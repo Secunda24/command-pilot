@@ -63,6 +63,34 @@ const defaultRuntimeSettings: RuntimeSafetySettings = {
   approvedLinkedAppKeys: linkedApps.map((app) => app.key)
 };
 
+function shouldInterpretWithAi(commandText: string): boolean {
+  const trimmed = commandText.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/^(can|could|would|will)\s+(you|u)\b/i.test(trimmed) || /^please\b/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/^(?:hey\s+)?echo(?:\s+|,\s*)/i.test(trimmed)) {
+    return false;
+  }
+
+  if (
+    /^(open|launch|start|run|create|show|check|find|search|list|type|notify|lock|close|minimize|go)\b/i.test(
+      trimmed
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    /\?$/.test(trimmed) ||
+    /^(what|why|how|who|when|where|tell me|explain|help)\b/i.test(trimmed)
+  );
+}
+
 export function App() {
   const [currentPage, setCurrentPage] = useState<PageId>("dashboard");
   const [snapshot, setSnapshot] = useState<DemoSnapshot>(demoSnapshot);
@@ -357,7 +385,9 @@ export function App() {
     const aiConversation = conversation
       .slice(-6)
       .map(({ role, text }) => ({ role, text }));
-    const aiResponse = await interpretCommandWithAi(trimmedCommand, aiConversation);
+    const aiResponse = shouldInterpretWithAi(trimmedCommand)
+      ? await interpretCommandWithAi(trimmedCommand, aiConversation)
+      : null;
 
     if (aiResponse?.interpretation.mode === "respond") {
       const assistantReply = aiResponse.interpretation.assistantReply;
