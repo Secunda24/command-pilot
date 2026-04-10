@@ -33,38 +33,21 @@ COMMANDPILOT_BRIDGE_URL = os.getenv("COMMANDPILOT_BRIDGE_URL", "http://127.0.0.1
 COMMANDPILOT_BRIDGE_TIMEOUT = int(os.getenv("COMMANDPILOT_BRIDGE_TIMEOUT", "45"))
 RECONNECT_DELAY = 5
 
-# Optional: Jarvis skills
-try:
-    from jarvis_skills import detect_and_run, process_action_queue
+# Optional modules are loaded lazily to avoid delaying relay connection.
+HAS_JARVIS = False
+HAS_OLLAMA = False
+HAS_TTS = False
+detect_and_run = None
+process_action_queue = None
+_ollama = None
+_tts = None
 
-    HAS_JARVIS = True
-    print("[AGENT] Jarvis skills loaded")
-except ImportError:
-    HAS_JARVIS = False
-    print("[AGENT] jarvis_skills.py not found - running without skills fallback")
-
-# Optional: Ollama
-try:
-    import ollama as _ollama
-
-    HAS_OLLAMA = True
-    print(f"[AGENT] Ollama loaded (model: {OLLAMA_MODEL})")
-except ImportError:
-    HAS_OLLAMA = False
-    print("[AGENT] ollama package not installed - pip install ollama")
-
-# Optional: pyttsx3 fallback
-try:
-    import pyttsx3 as _pyttsx3
-
-    _tts = _pyttsx3.init()
-    _tts.setProperty("rate", 185)
-    _tts.setProperty("volume", 1.0)
-    HAS_TTS = True
-    print("[AGENT] pyttsx3 fallback TTS loaded")
-except Exception:
-    HAS_TTS = False
-    print("[AGENT] pyttsx3 not available - SAPI only")
+_jarvis_init_done = False
+_ollama_init_done = False
+_tts_init_done = False
+_jarvis_init_lock = threading.Lock()
+_ollama_init_lock = threading.Lock()
+_tts_init_lock = threading.Lock()
 
 _ws_ref = [None]
 _loop_ref = [None]
@@ -108,6 +91,94 @@ def truncate_for_voice(text: str, limit: int = 260) -> str:
     return text[: limit - 3].rsplit(" ", 1)[0] + "..."
 
 
+def ensure_jarvis_loaded() -> bool:
+    global HAS_JARVIS, detect_and_run, process_action_queue, _jarvis_init_done
+    if _jarvis_init_done:
+        return HAS_JARVIS
+
+    with _jarvis_init_lock:
+        if _jarvis_init_done:
+            return HAS_JARVIS
+
+        try:
+            from jarvis_skills import detect_and_run as _detect_and_run
+            from jarvis_skills import process_action_queue as _process_action_queue
+
+            detect_and_run = _detect_and_run
+            process_action_queue = _process_action_queue
+            HAS_JARVIS = True
+            print("[AGENT] Jarvis skills loaded")
+        except ImportError:
+            HAS_JARVIS = False
+            print("[AGENT] jarvis_skills.py not found - running without skills fallback")
+        except Exception as exc:
+            HAS_JARVIS = False
+            print(f"[AGENT] Jarvis skills failed to initialize: {exc}")
+        finally:
+            _jarvis_init_done = True
+
+    return HAS_JARVIS
+
+
+def ensure_ollama_loaded() -> bool:
+    global HAS_OLLAMA, _ollama, _ollama_init_done
+    if _ollama_init_done:
+        return HAS_OLLAMA
+
+    with _ollama_init_lock:
+        if _ollama_init_done:
+            return HAS_OLLAMA
+
+        try:
+            import ollama as _ollama_module
+
+            _ollama = _ollama_module
+            HAS_OLLAMA = True
+            print(f"[AGENT] Ollama loaded (model: {OLLAMA_MODEL})")
+        except ImportError:
+            HAS_OLLAMA = False
+            print("[AGENT] ollama package not installed - pip install ollama")
+        except Exception as exc:
+            HAS_OLLAMA = False
+            print(f"[AGENT] Ollama failed to initialize: {exc}")
+        finally:
+            _ollama_init_done = True
+
+    return HAS_OLLAMA
+
+
+def ensure_tts_loaded() -> bool:
+    global HAS_TTS, _tts, _tts_init_done
+    if _tts_init_done:
+        return HAS_TTS
+
+    with _tts_init_lock:
+        if _tts_init_done:
+            return HAS_TTS
+
+        try:
+            import pyttsx3 as _pyttsx3_module
+
+            _tts = _pyttsx3_module.init()
+            _tts.setProperty("rate", 185)
+            _tts.setProperty("volume", 1.0)
+            HAS_TTS = True
+            print("[AGENT] pyttsx3 fallback TTS loaded")
+        except Exception:
+            HAS_TTS = False
+            print("[AGENT] pyttsx3 not available - SAPI only")
+        finally:
+            _tts_init_done = True
+
+    return HAS_TTS
+
+
+def warm_optional_modules():
+    """Best-effort warmup after relay auth to reduce first-command latency."""
+    ensure_jarvis_loaded()
+    ensure_ollama_loaded()
+
+
 def speak_with_sapi(text: str) -> bool:
     """Speak via Windows SAPI using same profile as user's Jarvis setup."""
     escaped = text.replace("'", "''")
@@ -141,7 +212,7 @@ def speak_local(text: str):
     if speak_with_sapi(clipped):
         return
 
-    if HAS_TTS:
+    if ensure_tts_loaded():
         try:
             _tts.say(clipped)
             _tts.runAndWait()
@@ -150,7 +221,7 @@ def speak_local(text: str):
 
 
 def ask_ollama(question: str) -> str:
-    if not HAS_OLLAMA:
+    if not ensure_ollama_loaded():
         return "Ollama is not installed on this PC. Run: pip install ollama"
 
     try:
@@ -249,7 +320,7 @@ def run_command(ws, raw: str):
         if bridge_error:
             print(f"[BRIDGE] {bridge_error}")
 
-        if HAS_JARVIS:
+        if ensure_jarvis_loaded():
             try:
                 intent, response = detect_and_run(raw)
                 process_action_queue()
@@ -317,6 +388,7 @@ async def agent_loop():
 
                     if msg_type == "auth_ok":
                         print(f"[AGENT] Auth OK - {data.get('message', '')}")
+                        threading.Thread(target=warm_optional_modules, daemon=True).start()
                         await ws.send(
                             json.dumps(
                                 {
@@ -356,7 +428,7 @@ if __name__ == "__main__":
     print(f"  Relay   : {RELAY_URL}")
     print(f"  Bridge  : {COMMANDPILOT_BRIDGE_URL}")
     print(f"  Ollama  : {OLLAMA_MODEL}")
-    print(f"  Jarvis  : {'enabled' if HAS_JARVIS else 'disabled'}")
+    print("  Jarvis  : on-demand")
     print("=" * 64)
 
     if RELAY_URL == "wss://your-relay-url.onrender.com":
